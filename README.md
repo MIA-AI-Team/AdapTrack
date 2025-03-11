@@ -40,3 +40,12 @@ run 1. YOLOX
 run 2. FastReID
 run 3. AdapTrack
 ```
+### Updates
+- Modified `opts.py` to avoid import-time execution and support custom datasets.
+- Updated `track.py` to handle cases without MOT-style detection features.
+- Added flexibility for Kaggle or non-MOT environments.
+
+### Running with Custom Datasets
+To use with a custom dataset (e.g., in Kaggle):
+1. Set `dataset_root`, `dataset`, `mode`, and `vid_names` in your script after importing `Opts`.
+2. Pass detections directly to `Tracker` instead of relying on `det_feat.pickle`.
