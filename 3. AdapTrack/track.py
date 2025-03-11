@@ -16,40 +16,47 @@ from AFLink.dataset import LinkData
 from trackeval.run import evaluate
 from os.path import join
 
-def create_detections(det_feat=None):
-    """Create Detection objects from precomputed features or return empty list if None."""
+def create_detections(det_input, opt):
+    """Create Detection objects from input data."""
     detections = []
-    if det_feat is None:
+    if det_input is None:
         return detections
 
-    for row in det_feat:
-        bbox, confidence, feature = row[:4], row[4], row[6:]
+    for row in det_input:
+        # Handle MOT-style (array) or custom (list/tuple) input
+        bbox = row[:4] if len(row) > 4 else row[0]  # MOT: row[:4], Custom: row[0]
+        confidence = row[4] if len(row) > 4 else row[1]  # MOT: row[4], Custom: row[1]
+        feature = row[6:] if len(row) > 6 else (row[2] if len(row) > 2 else None)  # MOT: row[6:], Custom: row[2] or None
         if confidence < opt.conf_thresh:
             continue
         detections.append(Detection(bbox, confidence, feature))
     return detections
 
-def run(vid_name, def_feat=None, save_path=None, detections_list=None):
+def run(vid_name, save_path=None, opt=None, def_feat=None, detections_list=None):
     """
     Run tracking on a sequence.
     
     Args:
         vid_name (str): Name of the video/sequence.
-        def_feat (dict, optional): Precomputed detection features (MOT-style).
         save_path (str, optional): Path to save tracking results.
+        opt (object): Configuration object with tracking parameters.
+        def_feat (dict, optional): Precomputed detection features (MOT-style).
         detections_list (list, optional): List of detections per frame (custom input).
     """
+    if opt is None:
+        raise ValueError("opt must be provided to configure the Tracker.")
+
     metric = metrics.NearestNeighborDistanceMetric()
-    tracker = Tracker(metric, vid_name)
+    tracker = Tracker(metric, vid_name, opt)  # Pass opt to Tracker
     results = []
 
     # Use detections_list if provided, otherwise fall back to def_feat
     if detections_list is not None:
         frames = range(len(detections_list))
-        detections_iter = detections_list
+        detections_iter = [create_detections(frame_dets, opt) for frame_dets in detections_list]
     elif def_feat is not None:
-        frames = def_feat.keys()
-        detections_iter = [create_detections(def_feat[frame_idx]) for frame_idx in frames]
+        frames = sorted(def_feat.keys())
+        detections_iter = [create_detections(def_feat[frame_idx], opt) for frame_idx in frames]
     else:
         raise ValueError("Either def_feat or detections_list must be provided.")
 
@@ -109,7 +116,7 @@ def main(opt):
 
         save_path = join(opt.save_dir, f'{vid_name}.txt')
         start = time.time()
-        sub_time, img_num = run(vid_name=vid_name, def_feat=def_feat.get(vid_name), save_path=save_path)
+        sub_time, img_num = run(vid_name=vid_name, def_feat=def_feat.get(vid_name), save_path=save_path, opt=opt)
 
         # Post-processing
         if opt.AFLink and af_linker:
