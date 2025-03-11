@@ -5,7 +5,7 @@ from trackers.units import Track
 from trackers import linear_assignment
 
 def apply_cmc(track, warp_matrix):
-    # Placeholder for CMC application (ensure this exists in cmc.py or here)
+    # Placeholder for CMC application
     pass
 
 class Tracker:
@@ -41,7 +41,8 @@ class Tracker:
         cost_matrix_min = np.min(cost_matrix)
         cost_matrix_max = np.max(cost_matrix)
         cost_matrix = linear_assignment.gate_cost_matrix(cost_matrix, tracks, detections,
-                                                         track_indices, detection_indices)
+                                                         track_indices, detection_indices,
+                                                         self.opt.gating_lambda)  # Pass gating_lambda
         return cost_matrix, cost_matrix_min, cost_matrix_max
 
     def match(self, detections):
