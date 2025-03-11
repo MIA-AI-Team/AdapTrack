@@ -1,17 +1,17 @@
 import numpy as np
-from opts import Opts  # Import class, not instance
 from trackers.cmc import CMC
 from trackers import metrics
 from trackers.units import Track
 from trackers import linear_assignment
 
 def apply_cmc(track, warp_matrix):
-    # Placeholder for CMC application (ensure this function exists in cmc.py or here)
+    # Placeholder for CMC application (ensure this exists in cmc.py or here)
     pass
 
 class Tracker:
-    def __init__(self, metric, vid_name):
+    def __init__(self, metric, vid_name, opt):
         self.metric = metric
+        self.opt = opt  # Store opt
         self.tracks = []
         self.next_id = 1
         try:
@@ -21,7 +21,7 @@ class Tracker:
             self.cmc = None
 
     def initiate_track(self, detection):
-        self.tracks.append(Track(detection.to_cxcyah(), self.next_id, detection.confidence, detection.feature))
+        self.tracks.append(Track(detection.to_cxcyah(), self.next_id, self.opt, detection.confidence, detection.feature))
         self.next_id += 1
 
     def predict(self):
@@ -49,13 +49,13 @@ class Tracker:
         unconfirmed_tracks = [i for i, t in enumerate(self.tracks) if not t.is_confirmed()]
         matches_a, _, unmatched_detections = \
             linear_assignment.min_cost_matching([self.gated_metric, metrics.iou_constraint, True],
-                                                opt.max_distance, self.tracks,
+                                                self.opt.max_distance, self.tracks,
                                                 detections, confirmed_tracks)
         unmatched_tracks_a = list(set(confirmed_tracks) - set(k for k, _ in matches_a))
         candidates = unconfirmed_tracks + [k for k in unmatched_tracks_a if self.tracks[k].time_since_update == 1]
         unmatched_tracks_a = [k for k in unmatched_tracks_a if self.tracks[k].time_since_update != 1]
         matches_b, unmatched_tracks_b, unmatched_detections = \
-            linear_assignment.min_cost_matching([metrics.iou_cost, None, True], opt.max_iou_distance, self.tracks,
+            linear_assignment.min_cost_matching([metrics.iou_cost, None, True], self.opt.max_iou_distance, self.tracks,
                                                 detections, candidates, unmatched_detections)
         matches = matches_a + matches_b
         unmatched_tracks = list(set(unmatched_tracks_a + unmatched_tracks_b))
@@ -68,7 +68,7 @@ class Tracker:
         for track_idx in unmatched_tracks:
             self.tracks[track_idx].mark_missed()
         for detection_idx in unmatched_detections:
-            if detections[detection_idx].confidence >= opt.conf_thresh:
+            if detections[detection_idx].confidence >= self.opt.conf_thresh:
                 self.initiate_track(detections[detection_idx])
         self.tracks = [t for t in self.tracks if not t.is_deleted()]
         active_targets = [t.track_id for t in self.tracks if t.is_confirmed()]

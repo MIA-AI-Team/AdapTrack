@@ -1,10 +1,8 @@
 import numpy as np
-from opts import opt
 from trackers.kalman_filter import KalmanFilter
 
-
 class Detection(object):
-    def __init__(self, tlbr, confidence, feature):
+    def __init__(self, tlbr, confidence, feature=None):
         # Save box
         self.tlbr = tlbr
         self.tlwh = tlbr.copy()
@@ -28,7 +26,10 @@ class TrackState:
 
 
 class Track:
-    def __init__(self, cxcyah, track_id, score=None, feature=None):
+    def __init__(self, cxcyah, track_id, opt, score=None, feature=None):
+        # Save opt for later use
+        self.opt = opt
+
         # Set parameters
         self.track_id = track_id
 
@@ -48,15 +49,13 @@ class Track:
             feature /= np.linalg.norm(feature)
             self.features.append(feature)
 
-        # Set kalman filter
+        # Set Kalman filter
         self.kf = KalmanFilter()
         self.mean, self.covariance = self.kf.initiate(cxcyah)
 
     def predict(self):
         # Predict Kalman state
         self.mean, self.covariance = self.kf.predict(self.mean, self.covariance)
-
-        # Update others
         self.time_since_update += 1
 
     def update(self, detection):
@@ -64,21 +63,21 @@ class Track:
         self.mean, self.covariance = self.kf.update(self.mean, self.covariance,
                                                     detection.to_cxcyah(), detection.confidence)
 
-        # Normalize
-        feature = detection.feature / np.linalg.norm(detection.feature)
-
-        # Update feature
-        beta = (detection.confidence - opt.conf_thresh) / (1 - opt.conf_thresh)
-        alpha = opt.ema_beta + (1 - opt.ema_beta) * (1 - beta)
-        smooth_feat = alpha * self.features[-1] + (1 - alpha) * feature
-
-        # Normalize, Save
-        self.features = [smooth_feat / np.linalg.norm(smooth_feat)]
+        # Normalize feature if provided
+        if detection.feature is not None:
+            feature = detection.feature / np.linalg.norm(detection.feature)
+            # Update feature with EMA
+            beta = (detection.confidence - self.opt.conf_thresh) / (1 - self.opt.conf_thresh)
+            alpha = self.opt.ema_beta + (1 - self.opt.ema_beta) * (1 - beta)
+            smooth_feat = alpha * self.features[-1] + (1 - alpha) * feature
+            self.features = [smooth_feat / np.linalg.norm(smooth_feat)]
+        else:
+            self.features = [self.features[-1]] if self.features else []
 
         # Update others
         self.hits += 1
         self.time_since_update = 0
-        if self.state == TrackState.Tentative and self.hits >= opt.min_len:
+        if self.state == TrackState.Tentative and self.hits >= self.opt.min_len:
             self.state = TrackState.Confirmed
 
     def to_tlwh(self):
@@ -95,7 +94,7 @@ class Track:
     def mark_missed(self):
         if self.state == TrackState.Tentative:
             self.state = TrackState.Deleted
-        elif self.time_since_update > opt.max_age:
+        elif self.time_since_update > self.opt.max_age:
             self.state = TrackState.Deleted
 
     def is_tentative(self):
