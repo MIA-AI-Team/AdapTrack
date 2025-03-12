@@ -3,7 +3,6 @@ from fastreid.config import get_cfg
 from fastreid.utils.checkpoint import Checkpointer
 from fastreid.modeling.meta_arch import build_model
 
-
 def setup_cfg(config_file, opts):
     # Load configuration file
     cfg = get_cfg()
@@ -13,14 +12,10 @@ def setup_cfg(config_file, opts):
     cfg.freeze()
     return cfg
 
-
 class FastReID(torch.nn.Module):
-    def __init__(self, dataset, weights_path):
+    def __init__(self, config_file, weights_path):  # Changed 'dataset' to 'config_file'
         super().__init__()
-        # Set path to the configuration file
-        config_file = "configs/%s/sbs_S50.yml" % dataset
-
-        # Get configuration
+        # Use the provided config file directly
         print('Configuration file: %s' % config_file)
         self.cfg = setup_cfg(config_file, ['MODEL.WEIGHTS', weights_path])
 
