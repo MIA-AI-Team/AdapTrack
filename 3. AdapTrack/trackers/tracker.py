@@ -1,10 +1,3 @@
-python
-
-Collapse
-
-Wrap
-
-Copy
 import numpy as np
 from trackers.cmc import CMC
 from trackers import metrics
