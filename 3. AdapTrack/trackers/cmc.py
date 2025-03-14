@@ -9,7 +9,7 @@ class CMC:
         line = self.gmcFile.readline()
         if not line:
             return np.eye(2, 3, dtype=np.float_)
-        tokens = line.strip().split("\t")  # Fixed to split on tab character
+        tokens = line.strip().split("\\t")
         if len(tokens) < 7:
             print(f"Warning: Malformed line in GMC file: {line.strip()}")
             return np.eye(2, 3, dtype=np.float_)
