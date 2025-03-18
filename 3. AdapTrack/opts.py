@@ -13,6 +13,7 @@ class Opts:
         self.parser.add_argument('--max_iou_distance', type=float, default=0.70, help='Max IoU distance for tracking')
         self.parser.add_argument('--min_len', type=int, default=3, help='Min track length to confirm')
         self.parser.add_argument('--max_age', type=int, default=30, help='Max age of unupdated tracks')
+        self.parser.add_argument('--max_age_tentative', type=int, default=2, help='Max age for tentative tracks before deletion')
         self.parser.add_argument('--ema_beta', type=float, default=0.90, help='EMA smoothing factor')
         self.parser.add_argument('--gating_lambda', type=float, default=0.98, help='Gating parameter')
         self.parser.add_argument('--min_box_area', type=int, default=100, help='Min box area for valid tracks')
