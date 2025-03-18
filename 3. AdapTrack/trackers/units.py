@@ -26,19 +26,14 @@ class Track:
         self.track_id = track_id
         self.hits = 1
         self.time_since_update = 0
-        self.state = TrackState.Tentative  # Default to Tentative
-        self.scores = []
-        if score is not None:
-            self.scores.append(score)
+        self.state = TrackState.Tentative  # Start as Tentative
+        self.scores = [score] if score is not None else []
         self.features = []
         if feature is not None:
             feature /= np.linalg.norm(feature)
             self.features.append(feature)
         self.kf = KalmanFilter()
         self.mean, self.covariance = self.kf.initiate(cxcyah)
-        # Confirm immediately if hits >= min_len
-        if self.hits >= self.opt.min_len:
-            self.state = TrackState.Confirmed
 
     def predict(self):
         self.mean, self.covariance = self.kf.predict(self.mean, self.covariance)
@@ -73,10 +68,10 @@ class Track:
 
     def mark_missed(self):
         if self.state == TrackState.Tentative:
-            self.state = TrackState.Deleted
+            if self.time_since_update > self.opt.max_age_tentative:  # e.g., 2 or 3
+                self.state = TrackState.Deleted
         elif self.time_since_update > self.opt.max_age:
             self.state = TrackState.Deleted
-
     def is_tentative(self):
         return self.state == TrackState.Tentative
 

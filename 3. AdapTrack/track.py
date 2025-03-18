@@ -48,14 +48,26 @@ def run(vid_name, save_path=None, opt=None, def_feat=None, detections_list=None)
         tracker.camera_update(frame_num)
         tracker.predict(frame_num)
         tracker.update(detections, frame_num)
-        for track in tracker.tracks:
-            if not track.is_confirmed() or track.time_since_update > 1:
+        
+        # Modified output logic
+        frame_results = []
+        if frame_idx == 0:  # First frame: include Tentative and Confirmed tracks
+            output_tracks = [track for track in tracker.tracks if track.is_confirmed() or track.is_tentative()]
+        else:  # Subsequent frames: include only Confirmed tracks
+            output_tracks = [track for track in tracker.tracks if track.is_confirmed()]
+        
+        for track in output_tracks:
+            if track.time_since_update > 1:  # Skip tracks not updated recently
                 continue
             bbox = track.to_tlwh()
-            if bbox[2] * bbox[3] > opt.min_box_area and bbox[2] / bbox[3] <= 1.6:
-                results.append([frame_num, track.track_id, bbox[0], bbox[1], bbox[2], bbox[3]])
+            if bbox[2] * bbox[3] > opt.min_box_area and bbox[2] / bbox[3] <= 1.6:  # Area and aspect ratio checks
+                frame_results.append([frame_num, track.track_id, bbox[0], bbox[1], bbox[2], bbox[3]])
+        
+        results.extend(frame_results)
+        
         if frame_idx % 50 == 0:
             print(f'{vid_name} {frame_idx} / {len(frames)} Finished', flush=True)
+    
     if save_path:
         start = time.time()
         with open(save_path, 'w') as f:
@@ -64,6 +76,7 @@ def run(vid_name, save_path=None, opt=None, def_feat=None, detections_list=None)
         write_time = time.time() - start
     else:
         write_time = 0
+    
     return write_time, len(frames)
 
 def main(opt):
@@ -116,3 +129,16 @@ if __name__ == '__main__':
     opts = Opts()
     opt = opts.parse()
     main(opt)
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
