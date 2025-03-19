@@ -1,115 +1,175 @@
 import os
+import cv2
 import torch
 import random
 import pickle
-import argparse
 import numpy as np
-from yolox.core import launch
-from yolox.exp import get_exp
-from yolox.utils import fuse_model
 import torch.backends.cudnn as cudnn
-from yolox.evaluators import DetEvaluator
-from torch.nn.parallel import DistributedDataParallel as DDP
 
+# Assuming this script is in your forked repo with YOLOX structure
+from yolox.exp import get_exp
+from yolox.utils import fuse_model, postprocess
+from yolox.models import YOLOX as YOLOXModel
 
-def make_parser():
-    parser = argparse.ArgumentParser("YOLOX")
+def detect(
+    exp_file: str,
+    ckpt_file: str,
+    output_file: str,
+    frame_paths: list,
+    test_conf: float = 0.5,
+    nmsthre: float = 0.45,
+    test_size: tuple = (1088, 1088),
+    fuse: bool = True,
+    fp16: bool = True,
+    seed: int = None,
+    local_rank: int = 0,
+    device: str = None
+):
+    """
+    Run YOLOX detection on a list of frames.
 
-    parser.add_argument("-f", "--exp_file", default=None, type=str, help="pls input your experiment description file",)
-    parser.add_argument("-c", "--ckpt", default=None, type=str, help="ckpt for eval")
-    parser.add_argument("-b", "--batch-size", type=int, default=64, help="batch size")
-    parser.add_argument("-d", "--devices", default=None, type=int, help="device for training")
-    parser.add_argument("--fuse", dest="fuse", default=False, action="store_true", help="Fuse conv and bn",)
-    parser.add_argument("-t", "--type", default=None, type=str)
-    parser.add_argument("-n", "--exp_name", type=str, default=None)
+    Args:
+        exp_file (str): Path to the experiment file (e.g., yolox_x_mot20_det.py).
+        ckpt_file (str): Path to the checkpoint file.
+        output_file (str): Path to save the detection results as a pickle file.
+        frame_paths (list): List of paths to image frames for detection.
+        test_conf (float): Confidence threshold for detection (default: 0.5).
+        nmsthre (float): NMS threshold (default: 0.45).
+        test_size (tuple): Input image size (height, width) (default: (1088, 1088)).
+        fuse (bool): Whether to fuse conv and BN layers (default: True).
+        fp16 (bool): Whether to use FP16 precision (default: True).
+        seed (int): Random seed for reproducibility (default: None).
+        local_rank (int): GPU rank for single-device use (default: 0).
+        device (str): Device to use ('cuda' or 'cpu', default: None auto-detects).
 
-    # distributed
-    parser.add_argument("--dist-backend", default="nccl", type=str, help="distributed backend")
-    parser.add_argument("--dist-url", default=None, type=str, help="url used to set up distributed training",)
-    parser.add_argument("--local_rank", default=0, type=int, help="local rank for dist training")
-    parser.add_argument("--num_machines", default=1, type=int, help="num of node for training")
-    parser.add_argument("--machine_rank", default=0, type=int, help="node rank for multi-node training")
-    parser.add_argument("--trt", dest="trt", default=False, action="store_true", help="Using TensorRT model",)
-    parser.add_argument("--test", dest="test", default=False, action="store_true", help="Evaluating on test-dev set.",)
-    parser.add_argument("--speed", dest="speed", default=False, action="store_true", help="speed test only.",)
-    parser.add_argument("opts", help="Modify config options", default=None, nargs=argparse.REMAINDER,)
-    parser.add_argument("--fp16", dest="fp16", action="store_true",)
+    Returns:
+        dict: Detections per frame in MOT format {frame_id: np.array([x1, y1, x2, y2, conf, class_id, vis])}.
+    """
+    # Set device
+    if device is None:
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    print(f"Using device: {device}")
 
-    # det args
-    parser.add_argument("--conf", default=0.1, type=float, help="test conf")
-    parser.add_argument("--nms", default=0.8, type=float, help="test nms threshold")
-    parser.add_argument("--tsize", default=None, type=int, help="test img size")
-    parser.add_argument("--min_box_area", default=100, type=int, help="filter out tiny boxes")
-    parser.add_argument("--seed", default=10000, type=int, help="eval seed")
+    # Verify paths
+    print("Checkpoint exists:", os.path.exists(ckpt_file))
+    print("Checkpoint size (bytes):", os.path.getsize(ckpt_file))
+    print("Exp file exists:", os.path.exists(exp_file))
+    print(f"Number of frames: {len(frame_paths)}")
 
-    return parser
+    # Set random seed if provided
+    if seed is not None:
+        random.seed(seed)
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        np.random.seed(seed)
+        os.environ["PYTHONHASHSEED"] = str(seed)
 
-
-def main(exp, args, num_gpu):
-    if args.seed is not None:
-        random.seed(args.seed)
-        torch.manual_seed(args.seed)
-
-        # Added
-        torch.cuda.manual_seed(args.seed)
-        torch.cuda.manual_seed_all(args.seed)
-        np.random.seed(args.seed)
-        os.environ["PYTHONHASHSEED"] = str(args.seed)
-
-    is_distributed = num_gpu > 1
-
-    # set environment variables for distributed training
+    # Enable cuDNN benchmark for faster GPU convolutions (optional, remove if not needed)
     cudnn.benchmark = True
 
-    rank = args.local_rank
+    # Load experiment
+    try:
+        exp = get_exp(exp_file)
+    except Exception as e:
+        print(f"Failed to load exp file: {e}")
+        print("Falling back to default yolox_x config")
+        exp = get_exp(exp_name="yolox_x")
 
-    if args.conf is not None:
-        exp.test_conf = args.conf
-    if args.nms is not None:
-        exp.nmsthre = args.nms
-    if args.tsize is not None:
-        exp.test_size = (args.tsize, args.tsize)
+    # Configure exp
+    exp.num_classes = 1  # MOT20 has 1 class (person)
+    exp.test_conf = test_conf
+    exp.nmsthre = nmsthre
+    exp.test_size = test_size
 
+    # Load model
     model = exp.get_model()
-    torch.cuda.set_device(rank)
-    model.cuda(rank)
+    torch.cuda.set_device(local_rank)
+    model.cuda(local_rank)
     model.eval()
 
-    if not args.speed and not args.trt:
-        ckpt_file = args.ckpt
-        loc = "cuda:{}".format(rank)
-        ckpt = torch.load(ckpt_file, map_location=loc)
-        model.load_state_dict(ckpt["model"])
-    if is_distributed:
-        model = DDP(model, device_ids=[rank])
-    if args.fuse:
+    # Load checkpoint
+    try:
+        ckpt = torch.load(ckpt_file, map_location=f"cuda:{local_rank}")
+        state_dict = ckpt["model"]
+    except Exception as e:
+        print(f"Failed to load checkpoint: {e}")
+        raise
+
+    # Adjust state dict keys
+    new_state_dict = {}
+    for k, v in state_dict.items():
+        if k.startswith('backbone.backbone.'):
+            new_key = k.replace('backbone.backbone.', 'backbone.backbone.backbone.')
+        else:
+            new_key = k  # Head keys are correct as-is
+        new_state_dict[new_key] = v
+
+    model.load_state_dict(new_state_dict)
+
+    # Fuse model if specified
+    if fuse:
         model = fuse_model(model)
 
-    val_loader = exp.get_eval_loader(args.batch_size, is_distributed, args.test)
-    evaluator = DetEvaluator(args=args, dataloader=val_loader, img_size=exp.test_size, confthre=exp.test_conf,
-                             nmsthre=exp.nmsthre, num_classes=exp.num_classes,)
+    # Enable FP16 if specified
+    if fp16:
+        model = model.half()
 
-    # start evaluate, x1y1x2y2
-    det_results = evaluator.detect(model, args.fp16)
+    # Detection loop
+    detections_per_frame = {}
+    for frame_idx, frame_path in enumerate(frame_paths):
+        frame = cv2.imread(frame_path)
+        if frame is None:
+            print(f"Failed to load frame: {frame_path}")
+            detections_per_frame[frame_idx + 1] = np.array([])
+            continue
 
-    with open(args.exp_name, 'wb') as f:
-        pickle.dump(det_results, f, protocol=pickle.HIGHEST_PROTOCOL)
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        img, ratio = exp.preproc(frame_rgb, exp.test_size)
+        img = torch.from_numpy(img).unsqueeze(0).to(device)
+        if fp16:
+            img = img.half()
 
+        # Inference
+        with torch.no_grad():
+            outputs = model(img)
+            predictions = postprocess(outputs, exp.num_classes, exp.test_conf, exp.nmsthre)[0]
 
-if __name__ == "__main__":
-    args = make_parser().parse_args()
-    exp = get_exp(args.exp_file)
-    exp.merge(args.opts)
+        if predictions is None or len(predictions) == 0:
+            detections_per_frame[frame_idx + 1] = np.array([])
+            continue
 
-    num_gpu = torch.cuda.device_count() if args.devices is None else args.devices
-    assert num_gpu <= torch.cuda.device_count()
+        # Format detections
+        boxes = predictions[:, :4].cpu().numpy() / ratio
+        confidences = predictions[:, 4].cpu().numpy()
+        class_ids = predictions[:, 6].cpu().numpy()
+        mask = class_ids == 0  # Filter for person
+        boxes = boxes[mask]
+        confidences = confidences[mask]
 
-    launch(
-        main,
-        num_gpu,
-        args.num_machines,
-        args.machine_rank,
-        backend=args.dist_backend,
-        dist_url=args.dist_url,
-        args=(exp, args, num_gpu),
-    )
+        # MOT format: [x1, y1, x2, y2, conf, class_id, visibility]
+        detections = np.zeros((len(boxes), 7))
+        detections[:, :4] = boxes
+        detections[:, 4] = confidences
+        detections[:, 5] = 0  # Class ID (person)
+        detections[:, 6] = 1.0  # Visibility
+
+        detections_per_frame[frame_idx + 1] = detections
+
+    # Save detections
+    with open(output_file, 'wb') as f:
+        pickle.dump(detections_per_frame, f, protocol=pickle.HIGHEST_PROTOCOL)
+    print(f"Detections saved to {output_file}")
+
+    # Print sample
+    print("Sample detections from first frame with detections:")
+    found = False
+    for frame_id, dets in detections_per_frame.items():
+        if len(dets) > 0:
+            print(f"Frame {frame_id}: {dets[:5]}")  # First 5 detections
+            found = True
+            break
+    if not found:
+        print("No detections found in any frame.")
+
+    return detections_per_frame
