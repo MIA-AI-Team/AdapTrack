@@ -138,3 +138,13 @@ class Exp(MyExp):
             testdev=testdev,
         )
         return evaluator
+    
+    def preproc(self, img, input_size):
+        """Preprocess an image for inference."""
+        from yolox.data import ValTransform
+        transform = ValTransform(
+            rgb_means=(0.485, 0.456, 0.406),
+            std=(0.229, 0.224, 0.225)
+        )
+        img, _ = transform(img, None, input_size)
+        return img, 1.0
