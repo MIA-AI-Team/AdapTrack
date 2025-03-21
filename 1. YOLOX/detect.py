@@ -168,8 +168,7 @@ def detect(
     # Save detections to file
     detections_dict = {i + 1: det for i, det in enumerate(detections_list)}
     with open(output_file, 'wb') as f:
-        pickle.dump(detections_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
+        pickle.dump(detections_list, f, protocol=pickle.HIGHEST_PROTOCOL) 
     detect_logger.info(f"Detections saved to {output_file}")
 
-    # Return detections as a list for downstream use
     return detections_list
